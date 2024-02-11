@@ -18,21 +18,9 @@ public import inochi2d.core.meshdata;
 
 
 package(inochi2d) {
-    private {
-        Shader maskShader;
-    }
-
-    /* GLSL Uniforms (Normal) */
-    GLint mvp;
-    GLint offset;
 
     void inInitMask() {
         inRegisterNodeType!Mask;
-        version(InDoesRender) {
-            maskShader = new Shader(import("mask.vert"), import("mask.frag"));
-            offset = maskShader.getUniformLocation("offset");
-            mvp = maskShader.getUniformLocation("mvp");
-        }
     }
 }
 
@@ -49,23 +37,6 @@ private:
     */
     void drawSelf() {
 
-        // Bind the vertex array
-        incDrawableBindVAO();
-
-        maskShader.use();
-        maskShader.setUniform(offset, data.origin);
-        maskShader.setUniform(mvp, inGetCamera().matrix * transform.matrix());
-        
-        // Enable points array
-        glEnableVertexAttribArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
-
-        // Bind index buffer
-        this.bindIndex();
-
-        // Disable the vertex attribs after use
-        glDisableVertexAttribArray(0);
     }
 
 protected:
@@ -79,37 +50,26 @@ public:
     */
     this(Node parent = null) {
         MeshData empty;
-        this(empty, inCreateUUID(), parent);
+        this(empty, inCreateUID(), parent);
     }
 
     /**
         Constructs a new mask
     */
     this(MeshData data, Node parent = null) {
-        this(data, inCreateUUID(), parent);
+        this(data, inCreateUID(), parent);
     }
 
     /**
         Constructs a new mask
     */
-    this(MeshData data, uint uuid, Node parent = null) {
-        super(data, uuid, parent);
+    this(MeshData data, uint uid, Node parent = null) {
+        super(data, uid, parent);
     }
     
     override
     void renderMask(bool dodge = false) {
-        
-        // Enable writing to stencil buffer and disable writing to color buffer
-        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-        glStencilFunc(GL_ALWAYS, dodge ? 0 : 1, 0xFF);
-        glStencilMask(0xFF);
 
-        // Draw ourselves to the stencil buffer
-        drawSelf();
-
-        // Disable writing to stencil buffer and enable writing to color buffer
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
 
     override

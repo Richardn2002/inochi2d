@@ -10,7 +10,6 @@ module inochi2d.core.nodes;
 import inochi2d.math;
 import inochi2d.fmt.serialize;
 import inochi2d.math.serialization;
-import inochi2d.core.dbg;
 import inochi2d.core;
 
 public import inochi2d.core.nodes.part;
@@ -21,12 +20,14 @@ public import inochi2d.core.nodes.meshgroup;
 public import inochi2d.core.nodes.drivers; 
 import std.typecons: tuple, Tuple;
 
+version(InUseUUIDs) import std.uuid;
+
 //public import inochi2d.core.nodes.shapes; // This isn't mainline yet!
 
 import std.exception;
 
 private {
-    uint[] takenUUIDs;
+    uint[] takenUIDs;
 }
 
 package(inochi2d) {
@@ -36,36 +37,74 @@ package(inochi2d) {
     }
 }
 
-enum InInvalidUUID = uint.max;
+enum InInvalidUID = uint.max;
 
 /**
-    Creates a new UUID for a node
+    Creates a new UID for a node
 */
-uint inCreateUUID() {
+uint inCreateUID() {
     import std.algorithm.searching : canFind;
     import std.random : uniform;
 
-    uint id = uniform(uint.min, InInvalidUUID);
-    while (takenUUIDs.canFind(id)) { id = uniform(uint.min, InInvalidUUID); } // Make sure the ID is actually unique in the current context
+    uint id = uniform(uint.min, InInvalidUID);
+    while (takenUIDs.canFind(id)) { id = uniform(uint.min, InInvalidUID); } // Make sure the ID is actually unique in the current context
 
     return id;
 }
 
 /**
-    Unloads a single UUID from the internal listing, freeing it up for reuse
+    Unloads a single UID from the internal listing, freeing it up for reuse
 */
-void inUnloadUUID(uint id) {
+void inUnloadUID(uint id) {
     import std.algorithm.searching : countUntil;
     import std.algorithm.mutation : remove;
-    ptrdiff_t idx = takenUUIDs.countUntil(id);
-    if (idx != -1) takenUUIDs.remove(idx);
+    ptrdiff_t idx = takenUIDs.countUntil(id);
+    if (idx != -1) takenUIDs.remove(idx);
 }
 
 /**
-    Clears all UUIDs from the internal listing
+    Clears all UIDs from the internal listing
 */
-void inClearUUIDs() {
-    takenUUIDs.length = 0;
+void inClearUIDs() {
+    takenUIDs.length = 0;
+}
+
+/**
+    Rendering ID sent to the renderer
+    This contains the basic rendering IDs that Inochi2D supports by default.
+*/
+enum RenderID : ubyte {
+
+    /**
+        Item does not render.
+
+        Node is a NoRender render ID.
+    */
+    NoRender        = 0x00,
+    
+    /**
+        Part rendering
+    */
+    Part            = 0x01,
+
+    /**
+        Animated Part rendering
+    */
+    AnimatedPart    = 0x02,
+    
+    /**
+        Mask rendering
+    */
+    Mask            = 0x03,
+
+    /**
+        Composite rendering
+    */
+    Composite       = 0x04,
+
+    // Reserved section
+    ReservedStart = 0x80,
+    COUNT = 255
 }
 
 /**
@@ -86,7 +125,7 @@ private:
     Node[] children_;
     
     @Ignore
-    uint uuid_;
+    uint uid_;
     
     @Name("zsort")
     float zsort_ = 0;
@@ -118,8 +157,13 @@ protected:
 
     void serializeSelfImpl(ref InochiSerializer serializer, bool recursive=true) {
         
-        serializer.putKey("uuid");
-        serializer.putValue(uuid);
+        version(InUseUUIDs) {
+            serializer.putKey("ext_uuid");
+            serializer.putValue(uuid.toString());
+        }
+
+        serializer.putKey("uid");
+        serializer.putValue(uid);
         
         serializer.putKey("name");
         serializer.putValue(name);
@@ -223,6 +267,12 @@ public:
     */
     bool enabled = true;
 
+    version(InUseUUIDs) {
+
+        // Globally Unique Identifier
+        UUID uuid;
+    }
+
     /**
         Whether the node is enabled for rendering
 
@@ -251,8 +301,8 @@ public:
     /**
         Returns the unique identifier for this node
     */
-    uint uuid() {
-        return uuid_;
+    uint uid() {
+        return uid_;
     }
 
     /**
@@ -263,7 +313,7 @@ public:
     /**
         Gets the relative Z sorting
     */
-    float relZSort() {
+    ref float relZSort() {
         return zsort_;
     }
 
@@ -322,21 +372,29 @@ public:
     */
     this(Puppet puppet) {
         puppet_ = puppet;
+        
+        version(InUseUUIDs) {
+            uuid = randomUUID();
+        }
     }
 
     /**
         Constructs a new node
     */
     this(Node parent = null) {
-        this(inCreateUUID(), parent);
+        this(inCreateUID(), parent);
     }
 
     /**
-        Constructs a new node with an UUID
+        Constructs a new node with an UID
     */
-    this(uint uuid, Node parent = null) {
+    this(uint uid, Node parent = null) {
         this.parent = parent;
-        this.uuid_ = uuid;
+        this.uid_ = uid;
+        
+        version(InUseUUIDs) {
+            uuid = randomUUID();
+        }
     }
 
     /**
@@ -796,7 +854,22 @@ public:
     */
     SerdeException deserializeFromFghj(Fghj data) {
 
-        if (auto exc = data["uuid"].deserializeValue(this.uuid_)) return exc;
+        // Handle conversion of old "UUID" scheme to new "UID" scheme
+        if (!data["uuid"].isEmpty) {
+            data["uuid"].deserializeValue(this.uid_);
+        } else if (!data["uid"].isEmpty) {
+            if (auto exc = data["uid"].deserializeValue(this.uid_)) return exc;
+        }
+
+        version (InUseUUIDs) {
+            if (!data["ext_uuid"].isEmpty) {
+                string uuidStr;
+                data["ext_uuid"].deserializeValue(uuidStr);
+
+                this.uuid = parseUUID(uuidStr);
+            }
+        }
+
 
         if (!data["name"].isEmpty) {
             if (auto exc = data["name"].deserializeValue(this.name)) return exc;
@@ -841,8 +914,8 @@ public:
 
         THIS IS NOT A SAFE OPERATION.
     */
-    final void forceSetUUID(uint uuid) {
-        this.uuid_ = uuid;
+    final void forceSetUID(uint uid) {
+        this.uid_ = uid;
     }
 
     rect getCombinedBoundsRect() {
@@ -896,62 +969,13 @@ public:
     bool canReparent(Node to) {
         Node tmp = to;
         while(tmp !is null) {
-            if (tmp.uuid == this.uuid) return false;
+            if (tmp.uid == this.uid) return false;
             
             // Check next up
             tmp = tmp.parent;
         }
         return true;
     }
-
-    /**
-        Draws orientation of the node
-    */
-    void drawOrientation() {
-        auto trans = transform.matrix();
-        inDbgLineWidth(4);
-
-        // X
-        inDbgSetBuffer([vec3(0, 0, 0), vec3(32, 0, 0)], [0, 1]);
-        inDbgDrawLines(vec4(1, 0, 0, 0.7), trans);
-
-        // Y
-        inDbgSetBuffer([vec3(0, 0, 0), vec3(0, -32, 0)], [0, 1]);
-        inDbgDrawLines(vec4(0, 1, 0, 0.7), trans);
-        
-        // Z
-        inDbgSetBuffer([vec3(0, 0, 0), vec3(0, 0, -32)], [0, 1]);
-        inDbgDrawLines(vec4(0, 0, 1, 0.7), trans);
-
-        inDbgLineWidth(1);
-    }
-
-    /**
-        Draws bounds
-    */
-    void drawBounds() {
-        vec4 bounds = this.getCombinedBounds;
-
-        float width = bounds.z-bounds.x;
-        float height = bounds.w-bounds.y;
-        inDbgSetBuffer([
-            vec3(bounds.x, bounds.y, 0),
-            vec3(bounds.x + width, bounds.y, 0),
-            
-            vec3(bounds.x + width, bounds.y, 0),
-            vec3(bounds.x + width, bounds.y+height, 0),
-            
-            vec3(bounds.x + width, bounds.y+height, 0),
-            vec3(bounds.x, bounds.y+height, 0),
-            
-            vec3(bounds.x, bounds.y+height, 0),
-            vec3(bounds.x, bounds.y, 0),
-        ]);
-        inDbgLineWidth(3);
-        inDbgDrawLines(vec4(.5, .5, .5, 1));
-        inDbgLineWidth(1);
-    }
-
 
     void setOneTimeTransform(mat4* transform) {
         oneTimeTransform = transform;
@@ -1000,6 +1024,11 @@ public:
             return transform.matrix;
         }
     }
+
+    /**
+        The render ID of the node
+    */
+    ubyte getRenderId() { return RenderID.NoRender; }
 }
 
 //

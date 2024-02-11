@@ -311,14 +311,14 @@ private:
         return null;
     }
 
-    Node findNode(Node n, uint uuid) {
+    Node findNode(Node n, uint uid) {
 
         // Name matches!
-        if (n.uuid == uuid) return n;
+        if (n.uid == uid) return n;
 
         // Recurse through children
         foreach(child; n.children) {
-            if (Node c = findNode(child, uuid)) return c;
+            if (Node c = findNode(child, uid)) return c;
         }
 
         // Not found
@@ -360,9 +360,11 @@ public:
 
     /**
         INP Texture slots for this puppet
+
+        These texture slots are API specific data
     */
     @Ignore
-    Texture[] textureSlots;
+    RuntimeTexture*[] textureSlots;
 
     /**
         Extended vendor data
@@ -390,6 +392,13 @@ public:
     Transform transform;
 
     /**
+        Destructor
+    */
+    ~this() {
+        inRenderUnRef();
+    }
+
+    /**
         Creates a new puppet from nothing ()
     */
     this() { 
@@ -399,6 +408,8 @@ public:
         root = new Node(this.puppetRootNode); 
         root.name = "Root";
         transform = Transform(vec3(0, 0, 0));
+
+        inRenderAddRef();
     }
 
     /**
@@ -413,6 +424,8 @@ public:
         this.scanParts!true(this.root);
         transform = Transform(vec3(0, 0, 0));
         this.selfSort();
+
+        inRenderAddRef();
     }
 
     /**
@@ -478,11 +491,11 @@ public:
     }
 
     /**
-        Returns a parameter by UUID
+        Returns a parameter by UID
     */
-    Parameter findParameter(uint uuid) {
+    Parameter findParameter(uint uid) {
         foreach(i, parameter; parameters) {
-            if (parameter.uuid == uuid) {
+            if (parameter.uid == uid) {
                 return parameter;
             }
         }
@@ -537,10 +550,10 @@ public:
     */
     final void updateTextureState() {
 
-        // Update filtering mode for texture slots
-        foreach(texutre; textureSlots) {
-            texutre.setFiltering(meta.preservePixels ? Filtering.Point : Filtering.Linear);
-        }
+        // // Update filtering mode for texture slots
+        // foreach(texture; textureSlots) {
+        //     texture.setFiltering(meta.preservePixels ? Filtering.Point : Filtering.Linear);
+        // }
     }
 
     /**
@@ -553,8 +566,8 @@ public:
     /**
         Finds Node by its unique id
     */
-    T find(T = Node)(uint uuid) if (is(T : Node)) {
-        return cast(T)findNode(root, uuid);
+    T find(T = Node)(uint uid) if (is(T : Node)) {
+        return cast(T)findNode(root, uid);
     }
 
     /**
@@ -585,7 +598,7 @@ public:
     /**
         Adds a texture to a new slot if it doesn't already exist within this puppet
     */
-    final uint addTextureToSlot(Texture texture) {
+    final uint addTextureToSlot(RuntimeTexture* texture) {
         import std.algorithm.searching : canFind;
 
         // Add texture if we can't find it.
@@ -607,11 +620,11 @@ public:
     }
 
     /**
-        Finds a texture by its runtime UUID
+        Finds a texture by its runtime UID
     */
-    final Texture findTextureByRuntimeUUID(uint uuid) {
+    final RuntimeTexture* findTextureByRuntimeUID(uint uid) {
         foreach(ref slot; textureSlots) {
-            if (slot.getRuntimeUUID())
+            if (slot.uid)
                 return slot;
         }
         return null;
@@ -620,7 +633,7 @@ public:
     /**
         Sets thumbnail of this puppet
     */
-    final void setThumbnail(Texture texture) {
+    final void setThumbnail(RuntimeTexture* texture) {
         if (this.meta.thumbnailId == NO_THUMBNAIL) {
             this.meta.thumbnailId = this.addTextureToSlot(texture);
         } else {
@@ -633,7 +646,7 @@ public:
 
         returns -1 if none was found
     */
-    final ptrdiff_t getTextureSlotIndexFor(Texture texture) {
+    final ptrdiff_t getTextureSlotIndexFor(RuntimeTexture* texture) {
         import std.algorithm.searching : countUntil;
         return textureSlots.countUntil(texture);
     }
@@ -677,7 +690,7 @@ public:
 
             string iden = getLineSet();
 
-            string s = "%s[%s] %s <%s>\n".format(n.children.length > 0 ? "╭─" : "", n.typeId, n.name, n.uuid);
+            string s = "%s[%s] %s <%s>\n".format(n.children.length > 0 ? "╭─" : "", n.typeId, n.name, n.uid);
             foreach(i, child; n.children) {
                 string term = "├→";
                 if (i == n.children.length-1) {

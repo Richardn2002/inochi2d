@@ -12,81 +12,9 @@ import inochi2d.fmt.serialize;
 import bindbc.opengl.context;
 import std.string;
 
-private {
-    bool inAdvancedBlending;
-    bool inAdvancedBlendingCoherent;
+/**
+    Blending modes
 
-    void inSetBlendModeLegacy(BlendMode blendingMode) {
-        switch(blendingMode) {
-            
-            // If the advanced blending extension is not supported, force to Normal blending
-            default:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-
-            case BlendMode.Normal: 
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-
-            case BlendMode.Multiply: 
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA); break;
-
-            case BlendMode.Screen:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR); break;
-
-            case BlendMode.Lighten:
-                glBlendEquation(GL_MAX);
-                glBlendFunc(GL_ONE, GL_ONE); break;
-
-            case BlendMode.ColorDodge:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_DST_COLOR, GL_ONE); break;
-
-            case BlendMode.LinearDodge:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_COLOR, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-                
-            case BlendMode.AddGlow:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-
-            case BlendMode.Subtract:
-                glBlendEquationSeparate(GL_FUNC_REVERSE_SUBTRACT, GL_FUNC_ADD);
-                glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ONE); break;
-
-            case BlendMode.Exclusion:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE_MINUS_SRC_COLOR, GL_ONE, GL_ONE); break;
-
-            case BlendMode.Inverse:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA); break;
-            
-            case BlendMode.DestinationIn:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ZERO, GL_SRC_ALPHA); break;
-
-            case BlendMode.ClipToLower:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_DST_ALPHA, GL_ONE_MINUS_SRC_ALPHA); break;
-
-            case BlendMode.SliceFromLower:
-                glBlendEquation(GL_FUNC_ADD);
-                glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); break;
-        }
-    }
-}
-
-void inInitBlending() {
-    
-    if (hasKHRBlendEquationAdvanced) inAdvancedBlending = true;
-    if (hasKHRBlendEquationAdvancedCoherent) inAdvancedBlendingCoherent = true;
-    if (inAdvancedBlendingCoherent) glEnable(GL_BLEND_ADVANCED_COHERENT_KHR);
-}
-
-/*
     INFORMATION ABOUT BLENDING MODES
     Blending is a complicated topic, especially once we get to mobile devices and games consoles.
 
@@ -125,10 +53,6 @@ void inInitBlending() {
         Clip to Lower
         Slice from Lower
     Tiling GPUs on older mobile devices don't have great drivers, we shouldn't tempt fate.
-*/
-
-/**
-    Blending modes
 */
 enum BlendMode {
     // Normal blending mode
@@ -194,62 +118,6 @@ enum BlendMode {
     SliceFromLower
 }
 
-void inSetBlendMode(BlendMode blendingMode, bool legacyOnly=false) {
-    if (!inAdvancedBlending || legacyOnly) inSetBlendModeLegacy(blendingMode);
-    else switch(blendingMode) {
-        case BlendMode.Normal: 
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-
-        case BlendMode.Multiply: glBlendEquation(GL_MULTIPLY_KHR); break;
-        case BlendMode.Screen: glBlendEquation(GL_SCREEN_KHR); break;
-        case BlendMode.Overlay: glBlendEquation(GL_OVERLAY_KHR); break;
-        case BlendMode.Darken: glBlendEquation(GL_DARKEN_KHR); break;
-        case BlendMode.Lighten: glBlendEquation(GL_LIGHTEN_KHR); break;
-        case BlendMode.ColorDodge: glBlendEquation(GL_COLORDODGE_KHR); break;
-        case BlendMode.LinearDodge:
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_COLOR, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-            
-        case BlendMode.AddGlow:
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE_MINUS_SRC_ALPHA); break;
-
-        case BlendMode.ColorBurn: glBlendEquation(GL_COLORBURN_KHR); break;
-        case BlendMode.HardLight: glBlendEquation(GL_HARDLIGHT_KHR); break;
-        case BlendMode.SoftLight: glBlendEquation(GL_SOFTLIGHT_KHR); break;
-        case BlendMode.Difference: glBlendEquation(GL_DIFFERENCE_KHR); break;
-        case BlendMode.Exclusion: glBlendEquation(GL_EXCLUSION_KHR); break;
-
-        case BlendMode.Subtract:
-            glBlendEquationSeparate(GL_FUNC_REVERSE_SUBTRACT, GL_FUNC_ADD);
-            glBlendFunc(GL_ONE, GL_ONE); break;
-
-        case BlendMode.Inverse:
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ONE_MINUS_SRC_ALPHA); break;
-                    
-        case BlendMode.DestinationIn:
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_ZERO, GL_SRC_ALPHA); break;
-
-        case BlendMode.ClipToLower:
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_DST_ALPHA, GL_ONE_MINUS_SRC_ALPHA); break;
-        
-        case BlendMode.SliceFromLower:
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); break;
-        
-        // Fallback to legacy
-        default: inSetBlendModeLegacy(blendingMode); break;
-    }
-}
-
-void inBlendModeBarrier() {
-    if (inAdvancedBlending && !inAdvancedBlendingCoherent) glBlendBarrierKHR();
-}
-
 /**
     Masking mode
 */
@@ -273,7 +141,7 @@ struct MaskBinding {
 public:
     import inochi2d.core.nodes.drawable : Drawable;
     @Name("source")
-    uint maskSrcUUID;
+    uint maskSrcUID;
 
     @Name("mode")
     MaskingMode mode;

@@ -7,6 +7,7 @@
     Authors: Luna Nielsen
 */
 module inochi2d.core.nodes.part;
+import inochi2d.core.render.ftable;
 import inochi2d.integration;
 import inochi2d.fmt;
 import inochi2d.core.nodes.drawable;
@@ -22,81 +23,15 @@ public import inochi2d.core.meshdata;
 
 
 package(inochi2d) {
-    private {
-        Texture boundAlbedo;
-
-        Shader partShader;
-        Shader partShaderAlbedo;
-        Shader partMaskShader;
-
-        /* GLSL Uniforms (Normal) */
-        GLint mvp;
-        GLint offset;
-        GLint gopacity;
-        GLint gMultColor;
-        GLint gScreenColor;
-        GLint gEmissionStrength;
-
-        
-        /* GLSL Uniforms (Albedo) */
-        GLint gamvp;
-        GLint gaoffset;
-        GLint gaopacity;
-        GLint gaMultColor;
-        GLint gaScreenColor;
-
-        /* GLSL Uniforms (Masks) */
-        GLint mmvp;
-        GLint mthreshold;
-
-        GLuint sVertexBuffer;
-        GLuint sUVBuffer;
-        GLuint sElementBuffer;
-    }
-
     void inInitPart() {
         inRegisterNodeType!Part;
-
-        version(InDoesRender) {
-            partShader = new Shader(import("basic/basic.vert"), import("basic/basic.frag"));
-            partShaderAlbedo = new Shader(import("basic/basic.vert"), import("basic/basic-albedo.frag"));
-            partMaskShader = new Shader(import("basic/basic.vert"), import("basic/basic-mask.frag"));
-
-            incDrawableBindVAO();
-
-            partShader.use();
-            partShader.setUniform(partShader.getUniformLocation("albedo"), 0);
-            partShader.setUniform(partShader.getUniformLocation("emissive"), 1);
-            partShader.setUniform(partShader.getUniformLocation("bumpmap"), 2);
-            mvp = partShader.getUniformLocation("mvp");
-            offset = partShader.getUniformLocation("offset");
-            gopacity = partShader.getUniformLocation("opacity");
-            gMultColor = partShader.getUniformLocation("multColor");
-            gScreenColor = partShader.getUniformLocation("screenColor");
-            gEmissionStrength = partShader.getUniformLocation("emissionStrength");
-            
-            partShaderAlbedo.use();
-            partShaderAlbedo.setUniform(partShader.getUniformLocation("albedo"), 0);
-            gamvp = partShaderAlbedo.getUniformLocation("mvp");
-            gaoffset = partShaderAlbedo.getUniformLocation("offset");
-            gaopacity = partShaderAlbedo.getUniformLocation("opacity");
-            gaMultColor = partShaderAlbedo.getUniformLocation("multColor");
-            gaScreenColor = partShaderAlbedo.getUniformLocation("screenColor");
-
-            partMaskShader.use();
-            partMaskShader.setUniform(partMaskShader.getUniformLocation("albedo"), 0);
-            partMaskShader.setUniform(partMaskShader.getUniformLocation("emissive"), 1);
-            partMaskShader.setUniform(partMaskShader.getUniformLocation("bumpmap"), 2);
-            mmvp = partMaskShader.getUniformLocation("mvp");
-            mthreshold = partMaskShader.getUniformLocation("threshold");
-            
-            glGenBuffers(1, &sVertexBuffer);
-            glGenBuffers(1, &sUVBuffer);
-            glGenBuffers(1, &sElementBuffer);
-        }
     }
 }
 
+// struct PartRenderData {
+//     float* vtxdata;
+//     MeshData* meshData;
+// }
 
 /**
     Creates a simple part that is sized after the texture given
@@ -107,7 +42,7 @@ package(inochi2d) {
     for real-time use when you want to add/remove parts on the fly
 */
 Part inCreateSimplePart(string file, Node parent = null) {
-    return inCreateSimplePart(ShallowTexture(file), parent, file);
+    return inCreateSimplePart(TextureData(file), parent, file);
 }
 
 /**
@@ -116,8 +51,8 @@ Part inCreateSimplePart(string file, Node parent = null) {
     This is unoptimal for normal use and should only be used
     for real-time use when you want to add/remove parts on the fly
 */
-Part inCreateSimplePart(ShallowTexture texture, Node parent = null, string name = "New Part") {
-	return inCreateSimplePart(new Texture(texture), parent, name);
+Part inCreateSimplePart(TextureData texture, Node parent = null, string name = "New Part") {
+	return inCreateSimplePart(new RuntimeTexture(texture), parent, name);
 }
 
 /**
@@ -126,12 +61,15 @@ Part inCreateSimplePart(ShallowTexture texture, Node parent = null, string name 
     This is unoptimal for normal use and should only be used
     for real-time use when you want to add/remove parts on the fly
 */
-Part inCreateSimplePart(Texture tex, Node parent = null, string name = "New Part") {
-	MeshData data = MeshData([
-		vec2(-(tex.width/2), -(tex.height/2)),
-		vec2(-(tex.width/2), tex.height/2),
-		vec2(tex.width/2, -(tex.height/2)),
-		vec2(tex.width/2, tex.height/2),
+Part inCreateSimplePart(RuntimeTexture* tex, Node parent = null, string name = "New Part") {
+	float twidth = tex.width;
+    float theight = tex.height;
+    
+    MeshData data = MeshData([
+		vec2(-(twidth/2), -(theight/2)),
+		vec2(-(twidth/2), theight/2),
+		vec2(twidth/2, -(theight/2)),
+		vec2(twidth/2, theight/2),
 	], 
 	[
 		vec2(0, 0),
@@ -162,134 +100,14 @@ enum TextureUsage : size_t {
 */
 @TypeId("Part")
 class Part : Drawable {
-private:    
-    GLuint uvbo;
-
-    void updateUVs() {
-        version(InDoesRender) {
-            glBindBuffer(GL_ARRAY_BUFFER, uvbo);
-            glBufferData(GL_ARRAY_BUFFER, data.uvs.length*vec2.sizeof, data.uvs.ptr, GL_STATIC_DRAW);
-        }
-    }
+private:
+    InRenderData renderData;
 
     /*
         RENDERING
     */
     void drawSelf(bool isMask = false)() {
-
-        // In some cases this may happen
-        if (textures.length == 0) return;
-
-        // Bind the vertex array
-        incDrawableBindVAO();
-        mat4 matrix = transform.matrix();
-        if (overrideTransformMatrix !is null)
-            matrix = overrideTransformMatrix.matrix;
-        if (oneTimeTransform !is null)
-            matrix = (*oneTimeTransform) * matrix;
-        static if (isMask) {
-            partMaskShader.use();
-            partMaskShader.setUniform(offset, data.origin);
-            partMaskShader.setUniform(mmvp, inGetCamera().matrix * puppet.transform.matrix * matrix);
-            partMaskShader.setUniform(mthreshold, clamp(offsetMaskThreshold + maskAlphaThreshold, 0, 1));
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        } else {
-
-            // Albedo-only
-            if (!textures[1] && !textures[2]) {
-                glDrawBuffers(3, [GL_COLOR_ATTACHMENT0, GL_NONE, GL_NONE].ptr);
-
-                partShaderAlbedo.use();
-                partShaderAlbedo.setUniform(gaoffset, data.origin);
-                partShaderAlbedo.setUniform(gamvp, inGetCamera().matrix * puppet.transform.matrix * matrix);
-                partShaderAlbedo.setUniform(gaopacity, clamp(offsetOpacity * opacity, 0, 1));
-
-                partShaderAlbedo.setUniform(partShaderAlbedo.getUniformLocation("albedo"), 0);
-                
-                vec3 clampedColor = tint;
-                if (!offsetTint.x.isNaN) clampedColor.x = clamp(tint.x*offsetTint.x, 0, 1);
-                if (!offsetTint.y.isNaN) clampedColor.y = clamp(tint.y*offsetTint.y, 0, 1);
-                if (!offsetTint.z.isNaN) clampedColor.z = clamp(tint.z*offsetTint.z, 0, 1);
-                partShaderAlbedo.setUniform(gaMultColor, clampedColor);
-
-                clampedColor = screenTint;
-                if (!offsetScreenTint.x.isNaN) clampedColor.x = clamp(screenTint.x+offsetScreenTint.x, 0, 1);
-                if (!offsetScreenTint.y.isNaN) clampedColor.y = clamp(screenTint.y+offsetScreenTint.y, 0, 1);
-                if (!offsetScreenTint.z.isNaN) clampedColor.z = clamp(screenTint.z+offsetScreenTint.z, 0, 1);
-                partShaderAlbedo.setUniform(gaScreenColor, clampedColor);
-                inSetBlendMode(blendingMode, false);
-            } else {
-                glDrawBuffers(3, [GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2].ptr);
-
-                partShader.use();
-                partShader.setUniform(offset, data.origin);
-                partShader.setUniform(mvp, inGetCamera().matrix * puppet.transform.matrix * matrix);
-                partShader.setUniform(gopacity, clamp(offsetOpacity * opacity, 0, 1));
-                partShader.setUniform(gEmissionStrength, emissionStrength*offsetEmissionStrength);
-
-                partShader.setUniform(partShader.getUniformLocation("albedo"), 0);
-                partShader.setUniform(partShader.getUniformLocation("emissive"), 1);
-                partShader.setUniform(partShader.getUniformLocation("bumpmap"), 2);
-                
-                vec3 clampedColor = tint;
-                if (!offsetTint.x.isNaN) clampedColor.x = clamp(tint.x*offsetTint.x, 0, 1);
-                if (!offsetTint.y.isNaN) clampedColor.y = clamp(tint.y*offsetTint.y, 0, 1);
-                if (!offsetTint.z.isNaN) clampedColor.z = clamp(tint.z*offsetTint.z, 0, 1);
-                partShader.setUniform(gMultColor, clampedColor);
-
-                clampedColor = screenTint;
-                if (!offsetScreenTint.x.isNaN) clampedColor.x = clamp(screenTint.x+offsetScreenTint.x, 0, 1);
-                if (!offsetScreenTint.y.isNaN) clampedColor.y = clamp(screenTint.y+offsetScreenTint.y, 0, 1);
-                if (!offsetScreenTint.z.isNaN) clampedColor.z = clamp(screenTint.z+offsetScreenTint.z, 0, 1);
-                partShader.setUniform(gScreenColor, clampedColor);
-                inSetBlendMode(blendingMode, true);
-            }
-
-            // TODO: EXT MODE
-        }
-
-        // Make sure we check whether we're already bound
-        // Otherwise we're wasting GPU resources
-        if (boundAlbedo != textures[0]) {
-
-            // Bind the textures
-            foreach(i, ref texture; textures) {
-                if (texture) texture.bind(cast(uint)i);
-                else {
-
-                    // Disable texture when none is there.
-                    glActiveTexture(GL_TEXTURE0+cast(uint)i);
-                    glBindTexture(GL_TEXTURE_2D, 0);
-                }
-            }
-        }
-        
-
-        // Enable points array
-        glEnableVertexAttribArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
-
-        // Enable UVs array
-        glEnableVertexAttribArray(1); // uvs
-        glBindBuffer(GL_ARRAY_BUFFER, uvbo);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
-
-        // Enable deform array
-        glEnableVertexAttribArray(2); // deforms
-        glBindBuffer(GL_ARRAY_BUFFER, dbo);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, null);
-
-        // Bind index buffer
-        this.bindIndex();
-
-        // Disable the vertex attribs after use
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
-
-        // Blending barrier
-        inBlendModeBarrier();
+        inRenderSubmit(IN_PART, &renderData);
     }
 
 protected:
@@ -303,28 +121,28 @@ protected:
     override
     void serializeSelfImpl(ref InochiSerializer serializer, bool recursive = true) {
         super.serializeSelfImpl(serializer, recursive);
-        version (InDoesRender) {
-            if (inIsINPMode()) {
-                serializer.putKey("textures");
-                auto state = serializer.arrayBegin();
-                    foreach(ref texture; textures) {
-                        if (texture) {
-                            ptrdiff_t index = puppet.getTextureSlotIndexFor(texture);
-                            if (index >= 0) {
-                                serializer.elemBegin;
-                                serializer.putValue(cast(size_t)index);
-                            } else {
-                                serializer.elemBegin;
-                                serializer.putValue(cast(size_t)NO_TEXTURE);
-                            }
-                        } else {
-                            serializer.elemBegin;
-                            serializer.putValue(cast(size_t)NO_TEXTURE);
-                        }
-                    }
-                serializer.arrayEnd(state);
+
+        // TODO: Allow this again?
+        enforce(inIsINPMode(), "Can't serialize from raw JSON.");
+
+        serializer.putKey("textures");
+        auto state = serializer.arrayBegin();
+        foreach(ref texture; textures) {
+            if (texture) {
+                ptrdiff_t index = puppet.getTextureSlotIndexFor(texture);
+                if (index >= 0) {
+                    serializer.elemBegin;
+                    serializer.putValue(cast(size_t)index);
+                } else {
+                    serializer.elemBegin;
+                    serializer.putValue(cast(size_t)NO_TEXTURE);
+                }
+            } else {
+                serializer.elemBegin;
+                serializer.putValue(cast(size_t)NO_TEXTURE);
             }
         }
+        serializer.arrayEnd(state);
 
         serializer.putKey("blend_mode");
         serializer.serializeValue(blendingMode);
@@ -340,7 +158,7 @@ protected:
 
         if (masks.length > 0) {
             serializer.putKey("masks");
-            auto state = serializer.arrayBegin();
+            state = serializer.arrayBegin();
                 foreach(m; masks) {
                     serializer.elemBegin;
                     serializer.serializeValue(m);
@@ -359,38 +177,15 @@ protected:
     SerdeException deserializeFromFghj(Fghj data) {
         super.deserializeFromFghj(data);
 
-    
-        version(InRenderless) {
-            if (inIsINPMode()) {
-                foreach(texElement; data["textures"].byElement) {
-                    uint textureId;
-                    texElement.deserializeValue(textureId);
-                    if (textureId == NO_TEXTURE) continue;
+        // TODO: Allow this again?
+        enforce(inIsINPMode(), "Can't deserialize from raw JSON.");
 
-                    textureIds ~= textureId;
-                }
-            } else {
-                assert(0, "Raw Inochi2D JSON not supported in renderless mode");
-            }
-            
-            // Do nothing in this instance
-        } else {
-            if (inIsINPMode()) {
+        foreach(texElement; data["textures"].byElement) {
+            uint textureId;
+            texElement.deserializeValue(textureId);
+            if (textureId == NO_TEXTURE) continue;
 
-                size_t i;
-                foreach(texElement; data["textures"].byElement) {
-                    uint textureId;
-                    texElement.deserializeValue(textureId);
-
-                    // uint max = no texture set
-                    if (textureId == NO_TEXTURE) continue;
-
-                    textureIds ~= textureId;
-                    this.textures[i++] = inGetTextureFromId(textureId);
-                }
-            } else {
-                enforce(0, "Loading from texture path is deprecated.");
-            }
+            textureIds ~= textureId;
         }
 
         data["opacity"].deserializeValue(this.opacity);
@@ -414,9 +209,9 @@ protected:
 
             // Go every masked part
             foreach(imask; data["masked_by"].byElement) {
-                uint uuid;
-                if (auto exc = imask.deserializeValue(uuid)) return exc;
-                this.masks ~= MaskBinding(uuid, mode, null);
+                uint uid;
+                if (auto exc = imask.deserializeValue(uid)) return exc;
+                this.masks ~= MaskBinding(uid, mode, null);
             }
         }
 
@@ -424,25 +219,23 @@ protected:
             data["masks"].deserializeValue(this.masks);
         }
 
-        // Update indices and vertices
-        this.updateUVs();
         return null;
     }
 
     override
     void serializePartial(ref InochiSerializer serializer, bool recursive=true) {
         super.serializePartial(serializer, recursive);
-        serializer.putKey("textureUUIDs");
+        serializer.putKey("textureUIDs");
         auto state = serializer.arrayBegin();
             foreach(ref texture; textures) {
-                uint uuid;
+                uint uid;
                 if (texture !is null) {
-                    uuid = texture.getRuntimeUUID();                                    
+                    uid = texture.uid;                                    
                 } else {
-                    uuid = InInvalidUUID;
+                    uid = InInvalidUID;
                 }
                 serializer.elemBegin;
-                serializer.putValue(cast(size_t)uuid);
+                serializer.putValue(cast(size_t)uid);
             }
         serializer.arrayEnd(state);
     }
@@ -471,16 +264,14 @@ protected:
 
 public:
     /**
-        List of textures this part can use
-
-        TODO: use more than texture 0
+        Runtime textures associated with this part
     */
-    Texture[TextureUsage.COUNT] textures;
+    RuntimeTexture*[TextureUsage.COUNT] textures;
 
     /**
         List of texture IDs
     */
-    int[] textureIds;
+    uint[] textureIds;
 
     /**
         List of masks to apply
@@ -517,18 +308,15 @@ public:
     */
     vec3 screenTint = vec3(0, 0, 0);
 
-    /**
-        Gets the active texture
-    */
-    Texture activeTexture() {
-        return textures[0];
+    ~this() {
+        inRenderNodeCleanup(IN_PART, &renderData);
     }
 
     /**
         Constructs a new part
     */
-    this(MeshData data, Texture[] textures, Node parent = null) {
-        this(data, textures, inCreateUUID(), parent);
+    this(MeshData data, RuntimeTexture*[] textures, Node parent = null) {
+        this(data, textures, inCreateUID(), parent);
     }
 
     /**
@@ -536,47 +324,22 @@ public:
     */
     this(Node parent = null) {
         super(parent);
-        
-        version(InDoesRender) glGenBuffers(1, &uvbo);
     }
 
     /**
         Constructs a new part
     */
-    this(MeshData data, Texture[] textures, uint uuid, Node parent = null) {
-        super(data, uuid, parent);
+    this(MeshData data, RuntimeTexture*[] textures, uint uid, Node parent = null) {
+        super(data, uid, parent);
         foreach(i; 0..TextureUsage.COUNT) {
             if (i >= textures.length) break;
             this.textures[i] = textures[i];
         }
-
-        version(InDoesRender) {
-            glGenBuffers(1, &uvbo);
-
-            mvp = partShader.getUniformLocation("mvp");
-            gopacity = partShader.getUniformLocation("opacity");
-            
-            mmvp = partMaskShader.getUniformLocation("mvp");
-            mthreshold = partMaskShader.getUniformLocation("threshold");
-        }
-
-        this.updateUVs();
     }
     
     override
     void renderMask(bool dodge = false) {
         
-        // Enable writing to stencil buffer and disable writing to color buffer
-        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-        glStencilFunc(GL_ALWAYS, dodge ? 0 : 1, 0xFF);
-        glStencilMask(0xFF);
-
-        // Draw ourselves to the stencil buffer
-        drawSelf!true();
-
-        // Disable writing to stencil buffer and enable writing to color buffer
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
 
     override
@@ -679,7 +442,7 @@ public:
 
     bool isMaskedBy(Drawable drawable) {
         foreach(mask; masks) {
-            if (mask.maskSrc.uuid == drawable.uuid) return true;
+            if (mask.maskSrc.uid == drawable.uid) return true;
         }
         return false;
     }
@@ -687,14 +450,14 @@ public:
     ptrdiff_t getMaskIdx(Drawable drawable) {
         if (drawable is null) return -1;
         foreach(i, ref mask; masks) {
-            if (mask.maskSrc.uuid == drawable.uuid) return i;
+            if (mask.maskSrc.uid == drawable.uid) return i;
         }
         return -1;
     }
 
-    ptrdiff_t getMaskIdx(uint uuid) {
+    ptrdiff_t getMaskIdx(uint uid) {
         foreach(i, ref mask; masks) {
-            if (mask.maskSrc.uuid == uuid) return i;
+            if (mask.maskSrc.uid == uid) return i;
         }
         return -1;
     }
@@ -712,7 +475,7 @@ public:
     override
     void rebuffer(ref MeshData data) {
         super.rebuffer(data);
-        this.updateUVs();
+        inRenderNodeUpdate(IN_PART, &renderData);
     }
 
     override
@@ -727,32 +490,31 @@ public:
 
     override
     void drawOne() {
-        version (InDoesRender) {
-            if (!enabled) return;
-            if (!data.isReady) return; // Yeah, don't even try
-            
-            size_t cMasks = maskCount;
+        if (!enabled) return;
+        if (!data.isReady) return; // Yeah, don't even try
+        
+        size_t cMasks = maskCount;
 
-            if (masks.length > 0) {
-                import std.stdio : writeln;
-                inBeginMask(cMasks > 0);
+        if (masks.length > 0) {
+            import std.stdio : writeln;
+            inBeginMask(cMasks > 0);
 
-                foreach(ref mask; masks) {
-                    mask.maskSrc.renderMask(mask.mode == MaskingMode.DodgeMask);
-                }
-
-                inBeginMaskContent();
-
-                // We are the content
-                this.drawSelf();
-
-                inEndMask();
-                return;
+            foreach(ref mask; masks) {
+                mask.maskSrc.renderMask(mask.mode == MaskingMode.DodgeMask);
             }
 
-            // No masks, draw normally
+            inBeginMaskContent();
+
+            // We are the content
             this.drawSelf();
+
+            inEndMask();
+            return;
         }
+
+        // No masks, draw normally
+        this.drawSelf();
+    
         super.drawOne();
     }
 
@@ -768,11 +530,13 @@ public:
         
         MaskBinding[] validMasks;
         foreach(i; 0..masks.length) {
-            if (Drawable nMask = puppet.find!Drawable(masks[i].maskSrcUUID)) {
+            if (Drawable nMask = puppet.find!Drawable(masks[i].maskSrcUID)) {
                 masks[i].maskSrc = nMask;
                 validMasks ~= masks[i];
             }
         }
+
+        inRenderNodeFinalize(IN_PART, &renderData);
 
         // Remove invalid masks
         masks = validMasks;
@@ -787,176 +551,184 @@ public:
         }
     }
 
+    /**
+        The render ID of the node
+    */
+    override
+    ubyte getRenderId() { return RenderID.Part; }
 }
 
-/**
-    Draws a texture at the transform of the specified part
-*/
-void inDrawTextureAtPart(Texture texture, Part part) {
-    const float texWidthP = texture.width()/2;
-    const float texHeightP = texture.height()/2;
+// /**
+//     Draws a texture at the transform of the specified part
+// */
+// deprecated("Not available at current time, does nothing")
+// void inDrawTextureAtPart(RuntimeTexture* texture, Part part) {
+//     // const float texWidthP = texture.getWidth()/2;
+//     // const float texHeightP = texture.getHeight()/2;
 
-    // Bind the vertex array
-    incDrawableBindVAO();
+//     // // Bind the vertex array
+//     // incDrawableBindVAO();
 
-    partShader.use();
-    partShader.setUniform(mvp, 
-        inGetCamera().matrix * 
-        mat4.translation(vec3(part.transform.matrix() * vec4(1, 1, 1, 1)))
-    );
-    partShader.setUniform(gopacity, part.opacity);
-    partShader.setUniform(gMultColor, part.tint);
-    partShader.setUniform(gScreenColor, part.screenTint);
+//     // partShader.use();
+//     // partShader.setUniform(mvp, 
+//     //     inGetCamera().matrix * 
+//     //     mat4.translation(vec3(part.transform.matrix() * vec4(1, 1, 1, 1)))
+//     // );
+//     // partShader.setUniform(gopacity, part.opacity);
+//     // partShader.setUniform(gMultColor, part.tint);
+//     // partShader.setUniform(gScreenColor, part.screenTint);
     
-    // Bind the texture
-    texture.bind();
+//     // // Bind the texture
+//     // texture.bind();
 
-    // Enable points array
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, sVertexBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
-        -texWidthP, -texHeightP,
-        texWidthP, -texHeightP,
-        -texWidthP, texHeightP,
-        texWidthP, texHeightP,
-    ].ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
+//     // // Enable points array
+//     // glEnableVertexAttribArray(0);
+//     // glBindBuffer(GL_ARRAY_BUFFER, sVertexBuffer);
+//     // glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
+//     //     -texWidthP, -texHeightP,
+//     //     texWidthP, -texHeightP,
+//     //     -texWidthP, texHeightP,
+//     //     texWidthP, texHeightP,
+//     // ].ptr, GL_STATIC_DRAW);
+//     // glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
 
-    // Enable UVs array
-    glEnableVertexAttribArray(1); // uvs
-    glBindBuffer(GL_ARRAY_BUFFER, sUVBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
-        0, 0,
-        1, 0,
-        0, 1,
-        1, 1,
-    ].ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
+//     // // Enable UVs array
+//     // glEnableVertexAttribArray(1); // uvs
+//     // glBindBuffer(GL_ARRAY_BUFFER, sUVBuffer);
+//     // glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
+//     //     0, 0,
+//     //     1, 0,
+//     //     0, 1,
+//     //     1, 1,
+//     // ].ptr, GL_STATIC_DRAW);
+//     // glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
 
-    // Bind element array and draw our mesh
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sElementBuffer);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6*ushort.sizeof, (cast(ushort[])[
-        0u, 1u, 2u,
-        2u, 1u, 3u
-    ]).ptr, GL_STATIC_DRAW);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null);
+//     // // Bind element array and draw our mesh
+//     // glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sElementBuffer);
+//     // glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6*ushort.sizeof, (cast(ushort[])[
+//     //     0u, 1u, 2u,
+//     //     2u, 1u, 3u
+//     // ]).ptr, GL_STATIC_DRAW);
+//     // glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null);
 
-    // Disable the vertex attribs after use
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-}
+//     // // Disable the vertex attribs after use
+//     // glDisableVertexAttribArray(0);
+//     // glDisableVertexAttribArray(1);
+// }
 
-/**
-    Draws a texture at the transform of the specified part
-*/
-void inDrawTextureAtPosition(Texture texture, vec2 position, float opacity = 1, vec3 color = vec3(1, 1, 1), vec3 screenColor = vec3(0, 0, 0)) {
-    const float texWidthP = texture.width()/2;
-    const float texHeightP = texture.height()/2;
+// /**
+//     Draws a texture at the transform of the specified part
+// */
+// deprecated("Not available at current time, does nothing")
+// void inDrawTextureAtPosition(RuntimeTexture* texture, vec2 position, float opacity = 1, vec3 color = vec3(1, 1, 1), vec3 screenColor = vec3(0, 0, 0)) {
+//     // const float texWidthP = texture.getWidth()/2;
+//     // const float texHeightP = texture.getHeight()/2;
 
-    // Bind the vertex array
-    incDrawableBindVAO();
+//     // // Bind the vertex array
+//     // incDrawableBindVAO();
 
-    partShader.use();
-    partShader.setUniform(mvp, 
-        inGetCamera().matrix * 
-        mat4.scaling(1, 1, 1) * 
-        mat4.translation(vec3(position, 0))
-    );
-    partShader.setUniform(gopacity, opacity);
-    partShader.setUniform(gMultColor, color);
-    partShader.setUniform(gScreenColor, screenColor);
+//     // partShader.use();
+//     // partShader.setUniform(mvp, 
+//     //     inGetCamera().matrix * 
+//     //     mat4.scaling(1, 1, 1) * 
+//     //     mat4.translation(vec3(position, 0))
+//     // );
+//     // partShader.setUniform(gopacity, opacity);
+//     // partShader.setUniform(gMultColor, color);
+//     // partShader.setUniform(gScreenColor, screenColor);
     
-    // Bind the texture
-    texture.bind();
+//     // // Bind the texture
+//     // texture.bind();
 
-    // Enable points array
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, sVertexBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
-        -texWidthP, -texHeightP,
-        texWidthP, -texHeightP,
-        -texWidthP, texHeightP,
-        texWidthP, texHeightP,
-    ].ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
+//     // // Enable points array
+//     // glEnableVertexAttribArray(0);
+//     // glBindBuffer(GL_ARRAY_BUFFER, sVertexBuffer);
+//     // glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
+//     //     -texWidthP, -texHeightP,
+//     //     texWidthP, -texHeightP,
+//     //     -texWidthP, texHeightP,
+//     //     texWidthP, texHeightP,
+//     // ].ptr, GL_STATIC_DRAW);
+//     // glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
 
-    // Enable UVs array
-    glEnableVertexAttribArray(1); // uvs
-    glBindBuffer(GL_ARRAY_BUFFER, sUVBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, (cast(float[])[
-        0, 0,
-        1, 0,
-        0, 1,
-        1, 1,
-    ]).ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
+//     // // Enable UVs array
+//     // glEnableVertexAttribArray(1); // uvs
+//     // glBindBuffer(GL_ARRAY_BUFFER, sUVBuffer);
+//     // glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, (cast(float[])[
+//     //     0, 0,
+//     //     1, 0,
+//     //     0, 1,
+//     //     1, 1,
+//     // ]).ptr, GL_STATIC_DRAW);
+//     // glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
 
-    // Bind element array and draw our mesh
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sElementBuffer);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6*ushort.sizeof, (cast(ushort[])[
-        0u, 1u, 2u,
-        2u, 1u, 3u
-    ]).ptr, GL_STATIC_DRAW);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null);
+//     // // Bind element array and draw our mesh
+//     // glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sElementBuffer);
+//     // glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6*ushort.sizeof, (cast(ushort[])[
+//     //     0u, 1u, 2u,
+//     //     2u, 1u, 3u
+//     // ]).ptr, GL_STATIC_DRAW);
+//     // glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null);
 
-    // Disable the vertex attribs after use
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-}
+//     // // Disable the vertex attribs after use
+//     // glDisableVertexAttribArray(0);
+//     // glDisableVertexAttribArray(1);
+// }
 
-/**
-    Draws a texture at the transform of the specified part
-*/
-void inDrawTextureAtRect(Texture texture, rect area, rect uvs = rect(0, 0, 1, 1), float opacity = 1, vec3 color = vec3(1, 1, 1), vec3 screenColor = vec3(0, 0, 0), Shader s = null, Camera cam = null) {
+// /**
+//     Draws a texture at the transform of the specified part
+// */
+// deprecated("Not available at current time, does nothing")
+// void inDrawTextureAtRect(RuntimeTexture* texture, rect area, rect uvs = rect(0, 0, 1, 1), float opacity = 1, vec3 color = vec3(1, 1, 1), vec3 screenColor = vec3(0, 0, 0), Shader s = null, Camera cam = null) {
 
-    // Bind the vertex array
-    incDrawableBindVAO();
+//     // // Bind the vertex array
+//     // incDrawableBindVAO();
 
-    if (!s) s = partShader;
-    if (!cam) cam = inGetCamera();
-    s.use();
-    s.setUniform(s.getUniformLocation("mvp"), 
-        cam.matrix * 
-        mat4.scaling(1, 1, 1)
-    );
-    s.setUniform(s.getUniformLocation("opacity"), opacity);
-    s.setUniform(s.getUniformLocation("multColor"), color);
-    s.setUniform(s.getUniformLocation("screenColor"), screenColor);
+//     // if (!s) s = partShader;
+//     // if (!cam) cam = inGetCamera();
+//     // s.use();
+//     // s.setUniform(s.getUniformLocation("mvp"), 
+//     //     cam.matrix * 
+//     //     mat4.scaling(1, 1, 1)
+//     // );
+//     // s.setUniform(s.getUniformLocation("opacity"), opacity);
+//     // s.setUniform(s.getUniformLocation("multColor"), color);
+//     // s.setUniform(s.getUniformLocation("screenColor"), screenColor);
     
-    // Bind the texture
-    texture.bind();
+//     // // Bind the texture
+//     // texture.bind();
 
-    // Enable points array
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, sVertexBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
-        area.left, area.top,
-        area.right, area.top,
-        area.left, area.bottom,
-        area.right, area.bottom,
-    ].ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
+//     // // Enable points array
+//     // glEnableVertexAttribArray(0);
+//     // glBindBuffer(GL_ARRAY_BUFFER, sVertexBuffer);
+//     // glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, [
+//     //     area.left, area.top,
+//     //     area.right, area.top,
+//     //     area.left, area.bottom,
+//     //     area.right, area.bottom,
+//     // ].ptr, GL_STATIC_DRAW);
+//     // glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, null);
 
-    // Enable UVs array
-    glEnableVertexAttribArray(1); // uvs
-    glBindBuffer(GL_ARRAY_BUFFER, sUVBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, (cast(float[])[
-        uvs.x, uvs.y,
-        uvs.width, uvs.y,
-        uvs.x, uvs.height,
-        uvs.width, uvs.height,
-    ]).ptr, GL_STATIC_DRAW);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
+//     // // Enable UVs array
+//     // glEnableVertexAttribArray(1); // uvs
+//     // glBindBuffer(GL_ARRAY_BUFFER, sUVBuffer);
+//     // glBufferData(GL_ARRAY_BUFFER, 4*vec2.sizeof, (cast(float[])[
+//     //     uvs.x, uvs.y,
+//     //     uvs.getWidth, uvs.y,
+//     //     uvs.x, uvs.getHeight,
+//     //     uvs.getWidth, uvs.getHeight,
+//     // ]).ptr, GL_STATIC_DRAW);
+//     // glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, null);
 
-    // Bind element array and draw our mesh
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sElementBuffer);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6*ushort.sizeof, (cast(ushort[])[
-        0u, 1u, 2u,
-        2u, 1u, 3u
-    ]).ptr, GL_STATIC_DRAW);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null);
+//     // // Bind element array and draw our mesh
+//     // glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sElementBuffer);
+//     // glBufferData(GL_ELEMENT_ARRAY_BUFFER, 6*ushort.sizeof, (cast(ushort[])[
+//     //     0u, 1u, 2u,
+//     //     2u, 1u, 3u
+//     // ]).ptr, GL_STATIC_DRAW);
+//     // glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null);
 
-    // Disable the vertex attribs after use
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-}
+//     // // Disable the vertex attribs after use
+//     // glDisableVertexAttribArray(0);
+//     // glDisableVertexAttribArray(1);
+// }
